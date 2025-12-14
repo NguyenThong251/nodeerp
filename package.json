@@ -1,0 +1,26 @@
+{
+  "name": "nodejs-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.13",
+    "express": "^4.21.1",
+    "ioredis": "^5.4.1",
+    "meilisearch": "^0.52.0",
+    "module-alias": "^2.2.3",
+    "multer": "^2.0.2",
+    "mysql2": "^3.11.3"
+  },
+  "_moduleAliases": {
+    "@src": "src"
+  }
+}
