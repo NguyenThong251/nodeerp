@@ -12,7 +12,7 @@ class MySQLClient {
         host: "127.0.0.1",
         user: "thong",
         password: "thong@123",
-        database: "Timekeeping",
+        database: "vtigersoon",
       });
     }
     return this.connection;

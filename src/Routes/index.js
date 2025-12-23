@@ -39,7 +39,13 @@ router.post("/", async (req, res) => {
   const route = routers.find((r) => r._operation === _operation);
 
   if (route) {
-    const handler = require(route.source); // Nhập file thực thi
+    const handlerModule = require(route.source); // Nhập file thực thi
+    const handler = typeof handlerModule === "function"
+      ? handlerModule
+      : handlerModule?.[_operation] || handlerModule?.handler;
+
+    if (!handler || typeof handler !== "function")
+      return res.status(500).json({ success: false, error: { code: 1500, message: `Handler not found for operation: ${_operation}` } });
     // return await handler(req, res, redis); // Gọi handler
     return await handler(req, res); // Gọi handler
   }

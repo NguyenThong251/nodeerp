@@ -1,159 +1,185 @@
 const mysql = require("@src/Services/MySQL/MySQLClient");
+const { getTimekeepingData } = require("./getTimekeeping");
+const { findRecord, sanitizeRow, createResponse, formatDateTime, formatDate, addMinutesToTime, diffMinutes, roundMinutes, diffMinutesToTime } = require("@src/Utils/TimekeepingUtils");
+const { saveVRecord, updateVRecord } = require("@src/Utils/VtigerUtils");
 
+
+// ot_morning_limit/ot_night_limit dung de tinh  overtime morning va night bam vao nut checkin hien thi thong bao checkin ovt , co 1 api goi truoc ngay do nghi doi voi overtime nguyeên ngay off la se tao don ovt yeu cau cap nhat bam xac nhanj thi moi checkin/out
+// kiem tra them dieu kien cho checkin vao khung gio nao ...
+// save module vtiger 
 const saveTimekeeping = async (req, res) => {
   try {
-    const userId = req.userId;
-    const userRole = req.userRole;
+    // const userId = req.userId;
+    const userId = 207;
+    // const userRole = req.userRole;
     const values = req.body.values;
-    
+    // overtime morning and night 
+    const { dateStart } = req.body;
+    const now = new Date();
+    const nowStr = now.toTimeString().slice(0, 8);
 
-    if (!values) {
-      return res.status(200).json({
-        success: false,
-        error: "Values not found"
-      });
-    }
-    
+    if (!values)
+      return res.status(200).json(createResponse(false, "Values not found"));
 
-    const timekeepingToday = await getTimekeepingToday();
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' '); // Format: YYYY-MM-DD HH:MM:SS
-    
-    let result = {};
-    
-    // Check-in
-    if (!timekeepingToday || !timekeepingToday?.check_in) {
-      const checkIn = await handleCheckIn(userId, values);
-      if (!checkIn) {
-        return res.status(200).json({
-          success: false,
-          error: "Đã quá thời gian chấm vào!"
-        });
-      }
-      
-      result = checkIn;
-    }
-    // Check-out
-    else if (!timekeepingToday?.check_out) {
-    
-      const checkInTime = new Date(timekeepingToday?.check_in);
-      const checkOutTime = new Date();
-      const diffMinutes = Math.floor((checkOutTime - checkInTime) / (1000 * 60));
+    const settings = await getTimekeepingSettings(userId);
+    if (!settings)
+      return res.status(200).json(createResponse(false, "User not settings"));
 
-      if (diffMinutes <= 5) {
-        const countDown = 6 - diffMinutes;
-        return res.status(200).json({
-          success: false,
-          error: `Đợi ${countDown} phút trước khi chấm ra!`
-        });
-      }
-      
-      const checkOut = await handleCheckOut(timekeepingToday, values);
-      if (!checkOut) {
-        return res.status(200).json({
-          success: false,
-          error: "Chấm ra không thành công!"
-        });
-      }
-      
-      result = checkOut;
+    const today = formatDate();
+
+
+    // // check overtime morning and night 
+    // if (nowStr < settings.ot_morning_limit) {
+    //   const type = "Morning";
+    //   const overtimeMorning = await saveOvertime({ req, userId, today, nowStr, type, ovsource, settings });
+    //   if (overtimeMorning === false) return res.status(200).json(createResponse(false, "Lỗi khi tạo overtime morning"));
+    //   return res.status(200).json(createResponse(true, overtimeMorning));
+    // }
+    // if (nowStr > settings.ot_night_limit) {
+    //   const type = "Night";
+    //   const overtimeNight = await saveOvertime({ req, userId, today, nowStr, type, ovsource, settings });
+    //   if (overtimeNight === false) return res.status(200).json(createResponse(false, "Lỗi khi tạo overtime night"));
+    //   return res.status(200).json(createResponse(true, overtimeNight));
+    // }
+
+    const timekeepingData = await getTimekeepingData(userId, dateStart);
+    const timekeepingToday = timekeepingData?.[today];
+
+    // CHECKIN
+    if (!timekeepingToday?.checkin_time) {
+      const checkIn = await handleCheckIn(req, userId, today, values, settings, nowStr);
+      if (!checkIn)
+        return res.status(200).json(createResponse(false, "Checkin failed!"));
+      return res.status(200).json(createResponse(true, checkIn));
     }
-    // Timekeeping already completed
-    else {
-      timekeepingToday.source = JSON.parse(timekeepingToday?.source);
-      result = timekeepingToday;
+
+    // CHECKOUT
+    if (!timekeepingToday?.checkout_time) {
+      const checkInTime = new Date(timekeepingToday.checkin_time);
+      const diffMinutes = Math.floor((Date.now() - checkInTime.getTime()) / 60000);
+
+      if (diffMinutes <= 5)
+        return res.status(200).json(createResponse(false, `Đợi ${6 - diffMinutes} phút trước khi chấm ra!`));
+
+      const checkOut = await handleCheckOut(req, userId, today, timekeepingToday, values, settings, nowStr);
+      if (!checkOut)
+        return res.status(200).json(createResponse(false, "Chấm ra không thành công!"));
+      return res.status(200).json(createResponse(true, checkOut));
     }
-    
-    return res.status(200).json({
-      success: true,
-      data: { record: result }
-    });
+
+    // COMPLETED TIMEKEEPING TODAY
+    return res.status(200).json(createResponse(true, timekeepingToday));
   } catch (error) {
-    console.error("Error in saveTimekeeping:", error);
-    return res.status(500).json({
-      success: false,
-      error: error.message || "Internal server error"
-    });
+    return res.status(500).json(createResponse(false, error.message || "Internal server error"));
   }
 };
 
-/**
- * Xử lý check-in
- */
-async function handleCheckIn(userId, values) {
-  const now = new Date();
-  const endLateAfternoon = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    15, 0, 0 // 15:00:00
-  );
-  
-  // > check in
-  if (now > endLateAfternoon) return false;
-  
-  const nowStr = now.toISOString().slice(0, 19).replace('T', ' ');
+
+
+// HANDLE CHECK IN
+async function handleCheckIn(req, userId, today, values, settings, nowStr) {
+  if (nowStr > settings.checkin_time_min || (settings.ot_morning_limit && nowStr < settings.ot_morning_limit)) return false;
+
+  const timeCal = nowStr > settings.breakfast_timestart ? settings.breakfast_timeend : settings.checkin_time;
+  const grace = addMinutesToTime(timeCal, settings.grace_time);
+  const diff = diffMinutes(nowStr, grace);
+
   const source = { check_in: values };
-  
-  const query = "INSERT INTO vtiger_timekeeping_v2 (owner, check_in, source) VALUES (?, ?, ?)";
-  const result = await mysql.query(query, [userId, nowStr, JSON.stringify(source)]);
-  
+  const isWorkDay = await checkWorkDay(settings.works_day);
+
+  if (!isWorkDay) {
+    const res = await saveOvertime({
+      req,
+      userId,
+      today,
+      timeStart: nowStr,
+      type: "Offday",
+      ovsource: JSON.stringify(source)
+    });
+    if (res === false) return false;
+  }
+
+  const q = "INSERT INTO vtiger_timekeeping(created_by, checkin_time, late_minutes, source, create_time)VALUES (?, ?, ?, ?, ?)";
+  const tkSource = isWorkDay ? JSON.stringify(source) : null;
+  const lateMinutes = isWorkDay && diff > 0 && diff <= settings.lateearly_time_max
+    ? roundMinutes(diff, settings.lateearly_time_round)
+    : null;
+  const result = await mysql.query(q, [userId, now, lateMinutes, tkSource, now]);
+
   return {
     id: result.insertId,
-    owner: userId,
-    check_in: nowStr,
-    source: source
+    created_by: userId,
+    checkin_time: formatDateTime(),
+    source
   };
 }
 
-/**
- * check-out
- */
-async function handleCheckOut(timekeepingToday, values) {
-  if (!timekeepingToday?.id) {
-    return false;
-  }
-  
-  const id = timekeepingToday?.id;
-  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  
-  
-  const sourceCheckIn = JSON.parse(timekeepingToday?.source);
-  sourceCheckIn.check_out = values;
+// HANDLE CHECK OUT
+async function handleCheckOut(req, userId, today, timekeepingToday, values, settings, nowStr) {
+  if (!timekeepingToday?.timekeepingid) return false;
+  const id = timekeepingToday.timekeepingid;
+  const source = { ...JSON.parse(timekeepingToday.source), check_out: values };
 
-  const updateQuery = "UPDATE vtiger_timekeeping_v2 SET check_out=NOW(), source=? WHERE id = ?";
-  const result = await mysql.query(updateQuery, [JSON.stringify(sourceCheckIn), id]);
-  
-  if (result) {
-    return {
-      id: id,
-      owner: timekeepingToday.owner,
-      check_in: timekeepingToday.check_in,
-      check_out: now,
-      source: sourceCheckIn
-    };
-  } else {
-    return false;
+  const timeCal = nowStr < settings.breakfast_timestart ? settings.breakfast_timestart : settings.checkout_time;
+  const graceLimit = diffMinutesToTime(timeCal, settings.grace_time);
+
+  const isWorkDay = await checkWorkDay(settings.works_day);
+  if (!isWorkDay) {
+    const res = await saveOvertime({ req, userId, today, type: "Offday", timeEnd: nowStr, ovsource: source });
+    if (res === false) return false;
   }
+
+  const q = "UPDATE vtiger_timekeeping SET checkout_time=?, early_minutes=?, source=? WHERE timekeepingid = ?";
+  const tkSource = isWorkDay ? JSON.stringify(source) : null;
+  const earlyMinutes = isWorkDay && nowStr < graceLimit ? roundMinutes(-diffMinutes(nowStr, graceLimit), settings.lateearly_time_round) : null;
+  const result = await mysql.query(q, [now, earlyMinutes, tkSource, id]);
+  if (!result) return false;
+
+  return {
+    id,
+    created_by: timekeepingToday.created_by,
+    checkin_time: formatDateTime(timekeepingToday.checkin_time),
+    checkout_time: formatDateTime(),
+    source
+  };
+}
+
+async function getTimekeepingSettings(userId) {
+  const query = "SELECT * FROM vtiger_timekeeping_settings WHERE employees IS NOT NULL AND FIND_IN_SET(?, employees)";
+  const result = await mysql.query(query, [userId]);
+  if (!result?.length) return null;
+  return sanitizeRow(result[0]);
 }
 
 
-async function getTimekeepingToday() {
-  const today = new Date().toISOString().slice(0, 10); // Format: YYYY-MM-DD
-  const query = "SELECT * FROM vtiger_timekeeping_v2 WHERE DATE(check_in) = ?";
-  const result = await mysql.query(query, [today]);
-  
-  if (result && result.length > 0) {
-    const row = result[0];
-    const cleanedRow = {};
-    
-    for (const [key, value] of Object.entries(row)) {
-      cleanedRow[key] = value !== null ? String(value).replace(/<[^>]*>?/gm, '') : null;
-    }
-    
-    return cleanedRow;
-  }
-  
-  return null;
+
+async function checkWorkDay(works_day) {
+  if (!works_day) return false;
+  const today = new Date().getDay();
+  const workDays = works_day.split(',').map(day => day.trim());
+  return workDays.includes(String(today));
 }
+
+
+
+async function saveOvertime({ req, userId, today, timeStart, timeEnd = null, type = null, ovsource }) {
+  const module = 'Overtime';
+  const table = 'vtiger_overtime';
+  const payload = { time_start: timeStart, time_end: timeEnd, ovsource };
+
+  const overtime = await findRecord(today, userId, table, type);
+
+  if (overtime) {
+    return (await updateVRecord(req, module, { ...payload, record: overtime.crmid })).data.success;
+  }
+  return (await saveVRecord(req, module, {
+    ...payload,
+    reason: `Làm thêm ngày ${today}`,
+    date: today,
+    type
+  })).data.success;
+}
+
+
 
 module.exports = saveTimekeeping; 

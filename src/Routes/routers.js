@@ -12,7 +12,7 @@ const routers = [
   ...DanhgiacuoinamRouter,
   ...CongviecRouter,
   ...TimekeepingRouter,
-  ...LeadsRouter
+  ...LeadsRouter,
 ];
 
 module.exports = routers;
