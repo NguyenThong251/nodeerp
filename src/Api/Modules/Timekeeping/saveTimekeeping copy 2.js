@@ -1,16 +1,16 @@
 const mysql = require("@src/Services/MySQL/MySQLClient");
 const { getTimekeepingData } = require("./getTimekeeping");
-const { createResponse, formatDateTime, formatDate, } = require("@src/Utils/TimekeepingUtils");
+const { sanitizeRow, createResponse, formatDateTime, formatDate, } = require("@src/Utils/TimekeepingUtils");
 
 const saveTimekeeping = async (req, res) => {
   try {
-    const userId = 207;
+    const userId = req.userId;
     const values = req.body.values;
     const { dateStart } = req.body;
 
     const now = new Date();
     const nowStr = now.toTimeString().slice(0, 8);
-    const today = formatDate();
+
 
     if (!values)
       return res.status(200).json(createResponse(false, "Values not found"));
@@ -19,12 +19,14 @@ const saveTimekeeping = async (req, res) => {
     if (!settings)
       return res.status(200).json(createResponse(false, "User not settings"));
 
+    const today = formatDate();
+
     const timekeepingData = await getTimekeepingData(userId, dateStart);
     const timekeepingToday = timekeepingData?.[today];
 
     // CHECKIN
     if (!timekeepingToday?.checkin_time) {
-      const checkIn = await handleCheckIn({ userId, values, settings, nowStr, now });
+      const checkIn = await handleCheckIn(req, userId, today, values, settings, nowStr, now);
       if (!checkIn)
         return res.status(200).json(createResponse(false, "Checkin failed!"));
       return res.status(200).json(createResponse(true, checkIn));
@@ -38,7 +40,7 @@ const saveTimekeeping = async (req, res) => {
       if (diffMinutes <= 5)
         return res.status(200).json(createResponse(false, `Đợi ${6 - diffMinutes} phút trước khi chấm ra!`));
 
-      const checkOut = await handleCheckOut({ timekeepingToday, values, now });
+      const checkOut = await handleCheckOut(req, userId, today, timekeepingToday, values, settings, nowStr, now);
       if (!checkOut)
         return res.status(200).json(createResponse(false, "Chấm ra không thành công!"));
       return res.status(200).json(createResponse(true, checkOut));
@@ -53,7 +55,7 @@ const saveTimekeeping = async (req, res) => {
 
 
 // HANDLE CHECK IN
-async function handleCheckIn({ userId, values, settings, nowStr, now }) {
+async function handleCheckIn(userId, values, settings, nowStr, now) {
   const source = { check_in: values };
   if (nowStr > settings.checkin_time_min || (settings.ot_morning_limit && nowStr < settings.ot_morning_limit)) return false;
   const q = "INSERT INTO vtiger_timekeeping(created_by, checkin_time, source, create_time) VALUES (?, ?, ?, ?)";
@@ -68,7 +70,7 @@ async function handleCheckIn({ userId, values, settings, nowStr, now }) {
 }
 
 // HANDLE CHECK OUT
-async function handleCheckOut({ timekeepingToday, values, now }) {
+async function handleCheckOut(timekeepingToday, values, now) {
   const id = timekeepingToday.timekeepingid;
   if (!id) return false;
   const source = { ...JSON.parse(timekeepingToday.source), check_out: values };
@@ -97,11 +99,11 @@ async function getTimekeepingSettings(userId) {
     ORDER BY FIELD(scope,'user','global')
   `, [userId]);
 
-  const settings = {};
-  for (const r of rows) {
-    settings[r.setting_key] = r.setting_value;
-  }
-  return settings;
+  // const settings = {};
+  // for (const r of rows) {
+  //   settings[r.setting_key] = r.setting_value;
+  // }
+  return sanitizeRow(rows);
 }
 
 

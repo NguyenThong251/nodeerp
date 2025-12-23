@@ -1,5 +1,4 @@
 const mysql = require("@src/Services/MySQL/MySQLClient");
-
 const { sanitizeRow, createResponse } = require("@src/Utils/TimekeepingUtils");
 
 
@@ -7,11 +6,6 @@ const getTimekeeping = async (req, res) => {
     try {
         const userId = 207;
         const { dateStart, dateEnd } = req.body;
-
-        const settings = await getTimekeepingSettings(userId);
-        if (!settings)
-            return res.status(200).json(createResponse(false, "user not settings"));
-
         const dataTimekeeping = await getTimekeepingData(userId, dateStart, dateEnd);
         const hasData = Object.keys(dataTimekeeping).length !== 0;
         if (!hasData && !dateStart)
@@ -21,15 +15,6 @@ const getTimekeeping = async (req, res) => {
         return res.status(500).json(createResponse(false, error.message || "Internal server error"));
     }
 };
-
-
-async function getTimekeepingSettings(userId) {
-    const query = "SELECT * FROM vtiger_timekeeping_settings WHERE employees IS NOT NULL AND FIND_IN_SET(?, employees)";
-    const result = await mysql.query(query, [userId]);
-    if (!result?.length) return null;
-    return sanitizeRow(result[0]);
-}
-
 
 const getTimekeepingData = async (userId, dateStart, dateEnd) => {
     let query, params;
