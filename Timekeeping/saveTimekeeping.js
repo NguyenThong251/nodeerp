@@ -8,11 +8,9 @@ const timezone = require("dayjs/plugin/timezone");
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-// const saveTimekeeping = async (req, res, redis) => {
-const saveTimekeeping = async (req, res) => {
+const saveTimekeeping = async (req, res, redis) => {
   try {
-    // const userId = req.userId;
-    const userId = 207;
+    const userId = req.userId;
     const userRole = req?.userRole;
     const now = dayjs().tz("Asia/Ho_Chi_Minh").format("YYYY-MM-DD HH:mm:ss");
     const today = dayjs().tz("Asia/Ho_Chi_Minh").format("YYYY-MM-DD");
@@ -21,21 +19,23 @@ const saveTimekeeping = async (req, res) => {
     const { dateStart } = req.body;
 
 
+    //CHECK PERMISSION
+    const RedisModuleInfo = await redis.hget(`ERP:ModuleInfo:${userRole}`, "Timekeeping");
+    const { permission } = JSON.parse(RedisModuleInfo) || {};
+    const { createable, updateable, deleteable } = permission || {};
 
-    // const RedisModuleInfo = await redis.hget(`ERP:ModuleInfo:${userRole}`, "Timekeeping");
-    // const { permission } = JSON.parse(RedisModuleInfo) || {};
-    // const { createable, updateable, deleteable } = permission || {};
+    if (!permission || !createable || !updateable || !deleteable) {
+      return res.status(200).json(createResponse(false, { code: 'PERMISSION_DENIED', message: 'Permission denied' }));
+    }
 
-    // if (!permission || !createable || !updateable || !deleteable) {
-    //   return res.status(200).json(createResponse(false, { code: 'PERMISSION_DENIED', message: 'Permission denied' }));
-    // }
 
-    // const token = "DfJbIhGa5DScX5HL@redisfaceinfo";
-    // const redisKey = `face:verify:${userId}:${token}`;
-    // const exists = await redis.get(redisKey);
-    // if (!exists) {
-    //   return res.status(200).json(createResponse(false, { code: 'FACE_VERIFY_EXPIRED', message: 'Face verification expired or invalid' }));
-    // }
+    // CHECK FACE VERIFY
+    const token = "DfJbIhGa5DScX5HL@redisfaceinfo";
+    const redisKey = `face:verify:${userId}:${token}`;
+    const exists = await redis.get(redisKey);
+    if (!exists) {
+      return res.status(200).json(createResponse(false, { code: 'FACE_VERIFY_EXPIRED', message: 'Face verification expired or invalid' }));
+    }
     // await redis.del(redisKey); /// note
 
     if (!values)
